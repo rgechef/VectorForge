@@ -1,55 +1,54 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from PIL import Image
-import numpy as np
 import os
 import uuid
-from svgpathtools import svg2paths, wsvg
-from svgwrite import Drawing
+import potrace
+import ezdxf
+import numpy as np
+import io
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # Enable CORS for external apps like 3DShapeSnap.ai
 
-UPLOAD_FOLDER = "uploads"
-OUTPUT_FOLDER = "outputs"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-@app.route("/")
-def home():
+@app.route('/')
+def index():
     return jsonify({"status": "VectorForge is live!"})
 
-@app.route("/convert", methods=["POST"])
+@app.route('/convert', methods=['POST'])
 def convert():
-    if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    file = request.files['file']
+    output_format = request.form.get('format', 'dxf')
 
-    file = request.files["file"]
-    filename = f"{uuid.uuid4().hex}_{file.filename}"
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(file_path)
+    if output_format not in ['dxf', 'stl']:
+        return jsonify({"error": "Invalid format. Use 'dxf' or 'stl'."}), 400
 
-    try:
-        # Load image
-        image = Image.open(file_path).convert("L")
-        np_img = np.array(image)
+    # Load image
+    image = Image.open(file).convert("L")  # grayscale
+    bitmap = potrace.Bitmap(np.array(image) > 128)
+    path = bitmap.trace()
 
-        # Dummy conversion: generate a rectangle SVG path for now
-        height, width = np_img.shape
-        svg_filename = filename.replace(".png", ".svg").replace(".jpg", ".svg")
-        svg_path = os.path.join(OUTPUT_FOLDER, svg_filename)
+    # Prepare DXF or STL content
+    filename = f"{uuid.uuid4()}.{output_format}"
+    filepath = os.path.join("/tmp", filename)
 
-        dwg = Drawing(svg_path, profile='tiny', size=(width, height))
-        dwg.add(dwg.rect(insert=(0, 0), size=(width, height), fill='none', stroke='black'))
-        dwg.save()
+    if output_format == 'dxf':
+        doc = ezdxf.new()
+        msp = doc.modelspace()
+        for curve in path:
+            for segment in curve:
+                start = segment.start_point
+                end = segment.end_point
+                msp.add_line((start.x, start.y), (end.x, end.y))
+        doc.saveas(filepath)
+    else:
+        # Placeholder: STL conversion logic to be added
+        with open(filepath, "w") as f:
+            f.write("solid placeholder\nendsolid\n")
 
-        return jsonify({
-            "message": "File converted successfully",
-            "svg_path": svg_path
-        })
+    return send_file(filepath, as_attachment=True)
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(debug=True)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
