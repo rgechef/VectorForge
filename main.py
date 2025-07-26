@@ -1,48 +1,42 @@
 from flask import Flask, request, jsonify
-import os
-from werkzeug.utils import secure_filename
 from PIL import Image
-import svgpathtools
-import numpy as np
-import svgwrite
-import ezdxf
+from svgpathtools import svg2paths
+import os
 
 app = Flask(__name__)
-UPLOAD_FOLDER = 'uploads'
-OUTPUT_FOLDER = 'output'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-# === Homepage status check ===
 @app.route('/')
-def index():
-    return {"status": "VectorForge is live!"}
+def home():
+    return 'VectorForge API is Live!'
 
+@app.route('/vectorize', methods=['POST'])
+def vectorize():
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image uploaded'}), 400
 
-# === Utility: Check file extension ===
-def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    image = request.files['image']
+    filename = 'temp_input.png'
+    image.save(filename)
 
+    try:
+        # Convert image to SVG using Pillow and save
+        im = Image.open(filename).convert("L").point(lambda x: 0 if x < 128 else 255, '1')
+        svg_path = 'output.svg'
+        im.save(svg_path)
 
-# === Upload + Convert Route ===
-@app.route('/convert', methods=['POST'])
-def convert_file():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part in request"}), 400
+        # Optional: analyze SVG contents (demo)
+        paths, _ = svg2paths(svg_path)
 
-    file = request.files['file']
+        os.remove(filename)
 
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
+        return jsonify({
+            'message': 'Image vectorized successfully',
+            'svg_file': svg_path,
+            'num_paths_detected': len(paths)
+        })
 
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(filepath)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-        # === STEP 1: Convert to bitmap array ===
-        img = Image.open(filepath).convert("L")  # grayscale
-        bitma
+if __name__ == '__main__':
+    app.run(debug=True)
