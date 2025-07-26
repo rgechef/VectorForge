@@ -1,14 +1,14 @@
-
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 import os
 import uuid
 import cv2
 import numpy as np
-from svgpathtools import Path, Line, wsvg
+from svgpathtools import Path, Line, wsvg, parse_path
 import ezdxf
 from io import BytesIO
 from PIL import Image
+from xml.dom import minidom
 
 app = Flask(__name__)
 CORS(app)
@@ -18,10 +18,21 @@ DXF_FOLDER = 'output'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(DXF_FOLDER, exist_ok=True)
 
+def log(msg):
+    print("==== [DEBUG] " + msg)
+
 def raster_to_svg_paths(image_path):
+    log(f"Reading image: {image_path}")
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        raise Exception("Failed to load image!")
+    log("Image loaded.")
+
     edges = cv2.Canny(image, 100, 200)
+    log("Canny edges detected.")
+
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    log(f"Contours found: {len(contours)}")
 
     paths = []
     for contour in contours:
@@ -35,22 +46,23 @@ def raster_to_svg_paths(image_path):
         path = Path(*segments)
         paths.append(path)
 
+    log(f"SVG paths created: {len(paths)}")
     return paths
 
 def save_svg(paths, output_path):
+    log(f"Saving SVG: {output_path}")
     wsvg(paths, filename=output_path)
+    log("SVG saved.")
 
 def svg_to_dxf(svg_path, dxf_path):
+    log(f"Converting SVG to DXF: {svg_path} -> {dxf_path}")
     doc = ezdxf.new()
     msp = doc.modelspace()
 
-    # Parse the SVG file
-    from xml.dom import minidom
     doc_svg = minidom.parse(svg_path)
     path_strings = [path.getAttribute('d') for path in doc_svg.getElementsByTagName('path')]
     doc_svg.unlink()
 
-    from svgpathtools import parse_path
     for path_str in path_strings:
         parsed = parse_path(path_str)
         for segment in parsed:
@@ -58,34 +70,46 @@ def svg_to_dxf(svg_path, dxf_path):
                 start = segment.start
                 end = segment.end
                 msp.add_line((start.real, start.imag), (end.real, end.imag))
-            except:
-                pass
+            except Exception as e:
+                log(f"DXF segment error: {e}")
 
     doc.saveas(dxf_path)
+    log("DXF saved.")
 
 @app.route('/convert', methods=['POST'])
 def convert_image():
-    if 'image' not in request.files:
+    log("Incoming /convert request.")
+    # Accept both 'file' and 'image' keys for backwards compatibility
+    file = request.files.get('file') or request.files.get('image')
+    if not file or file.filename == '':
+        log("No file/image provided.")
         return jsonify({'error': 'No image provided'}), 400
-
-    image = request.files['image']
-    if image.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
 
     unique_id = str(uuid.uuid4())
     input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}.png")
     svg_path = os.path.join(DXF_FOLDER, f"{unique_id}.svg")
     dxf_path = os.path.join(DXF_FOLDER, f"{unique_id}.dxf")
 
-    image.save(input_path)
+    file.save(input_path)
+    log(f"File saved: {input_path}")
 
     try:
         paths = raster_to_svg_paths(input_path)
+        if not paths:
+            log("No vector paths generated from image!")
+            return jsonify({'error': 'No paths found in image. Try a darker or clearer drawing.'}), 400
         save_svg(paths, svg_path)
         svg_to_dxf(svg_path, dxf_path)
     except Exception as e:
+        log(f"Exception during conversion: {str(e)}")
         return jsonify({'error': f'Failed to convert image: {str(e)}'}), 500
 
+    # Confirm file was created and is non-empty before returning
+    if not os.path.exists(dxf_path) or os.path.getsize(dxf_path) < 100:
+        log("DXF file was not created or is empty!")
+        return jsonify({'error': 'DXF generation failed. Check the drawing and try again.'}), 500
+
+    log("Returning DXF file.")
     return send_file(dxf_path, as_attachment=True)
 
 @app.route('/', methods=['GET'])
