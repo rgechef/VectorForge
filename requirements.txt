@@ -4,4 +4,3 @@ Pillow
 numpy
 ezdxf
 svgpathtools
-git+https://github.com/flupke/pypotrace.git
