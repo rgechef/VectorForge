@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import uuid
@@ -10,6 +10,9 @@ from io import BytesIO
 from PIL import Image
 from xml.dom import minidom
 
+# Google Cloud Storage
+from google.cloud import storage
+
 app = Flask(__name__)
 CORS(app)
 
@@ -17,6 +20,9 @@ UPLOAD_FOLDER = 'uploads'
 DXF_FOLDER = 'output'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(DXF_FOLDER, exist_ok=True)
+
+# GCS bucket name
+BUCKET_NAME = os.getenv('GCS_BUCKET_NAME', 'vectorforge-uploads')
 
 def log(msg):
     print("==== [DEBUG] " + msg)
@@ -76,6 +82,18 @@ def svg_to_dxf(svg_path, dxf_path):
     doc.saveas(dxf_path)
     log("DXF saved.")
 
+def upload_to_gcs(local_file_path, destination_blob_name):
+    """Uploads a file to Google Cloud Storage and returns its public URL."""
+    log(f"Uploading {local_file_path} to GCS bucket {BUCKET_NAME} as {destination_blob_name}")
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(destination_blob_name)
+    blob.upload_from_filename(local_file_path)
+    # Optionally, make it public:
+    blob.make_public()
+    log(f"File uploaded. Public URL: {blob.public_url}")
+    return blob.public_url
+
 @app.route('/convert', methods=['POST'])
 def convert_image():
     log("Incoming /convert request.")
@@ -109,8 +127,16 @@ def convert_image():
         log("DXF file was not created or is empty!")
         return jsonify({'error': 'DXF generation failed. Check the drawing and try again.'}), 500
 
-    log("Returning DXF file.")
-    return send_file(dxf_path, as_attachment=True)
+    # Upload DXF to Google Cloud Storage
+    gcs_filename = f"outputs/{unique_id}.dxf"
+    try:
+        public_url = upload_to_gcs(dxf_path, gcs_filename)
+    except Exception as e:
+        log(f"GCS upload failed: {str(e)}")
+        return jsonify({'error': f'Failed to upload to cloud storage: {str(e)}'}), 500
+
+    log("Returning DXF file public URL.")
+    return jsonify({'dxf_url': public_url})
 
 @app.route('/', methods=['GET'])
 def health_check():
