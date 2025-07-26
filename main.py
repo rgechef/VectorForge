@@ -1,3 +1,8 @@
+# ===============================
+# 3DShapeSnap.ai / VectorForge API
+# Version: v1.9 (2025-07-26)
+# ===============================
+
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 import os
@@ -53,7 +58,7 @@ def raster_to_svg_paths(image_path):
         paths.append(path)
 
     log(f"SVG paths created: {len(paths)}")
-    return paths, contours
+    return paths
 
 def save_svg(paths, output_path):
     log(f"Saving SVG: {output_path}")
@@ -83,7 +88,7 @@ def svg_to_dxf(svg_path, dxf_path):
     log("DXF saved.")
 
 def save_to_gcs(local_path, dest_blob_name):
-    """Upload a local file to Google Cloud Storage."""
+    """Upload a local file to Google Cloud Storage and return a public URL."""
     client = storage.Client()
     bucket = client.bucket(GCS_BUCKET)
     blob = bucket.blob(dest_blob_name)
@@ -105,51 +110,7 @@ def cleanup_old_files(folder, extensions=['.dxf', '.svg', '.stl', '.obj', '.png'
             except Exception as e:
                 log(f"Cleanup error: {e}")
 
-# --- OBJ GENERATOR (Flat extrusion from contours) ---
-def contours_to_obj(contours, output_path, height=2.0):
-    vertices = []
-    faces = []
-    v_offset = 1  # OBJ indices start at 1
-
-    for contour in contours:
-        if len(contour) < 3:
-            continue  # Not a closed polygon
-        # Top face
-        for point in contour:
-            x, y = point[0]
-            vertices.append([x, -y, height])
-        # Bottom face
-        for point in contour:
-            x, y = point[0]
-            vertices.append([x, -y, 0])
-
-        n = len(contour)
-        # Top face indices
-        top_indices = list(range(v_offset, v_offset + n))
-        # Bottom face indices
-        bottom_indices = list(range(v_offset + n, v_offset + 2 * n))
-        # Add faces (top and bottom)
-        faces.append(top_indices)
-        faces.append(bottom_indices[::-1])  # Reverse order for correct normal
-
-        # Side faces
-        for i in range(n):
-            next_i = (i + 1) % n
-            v1 = v_offset + i
-            v2 = v_offset + next_i
-            v3 = v_offset + n + next_i
-            v4 = v_offset + n + i
-            faces.append([v1, v2, v3, v4])
-        v_offset += 2 * n
-
-    # Write OBJ file
-    with open(output_path, 'w') as f:
-        for v in vertices:
-            f.write(f"v {v[0]} {v[1]} {v[2]}\n")
-        for face in faces:
-            face_str = " ".join(str(idx) for idx in face)
-            f.write(f"f {face_str}\n")
-
+# === DXF Export ===
 @app.route('/convert', methods=['POST'])
 def convert_image():
     log("Incoming /convert request.")
@@ -167,7 +128,7 @@ def convert_image():
     log(f"File saved: {input_path}")
 
     try:
-        paths, _ = raster_to_svg_paths(input_path)
+        paths = raster_to_svg_paths(input_path)
         if not paths:
             log("No vector paths generated from image!")
             return jsonify({'error': 'No paths found in image. Try a darker or clearer drawing.'}), 400
@@ -182,17 +143,14 @@ def convert_image():
         log("DXF file was not created or is empty!")
         return jsonify({'error': 'DXF generation failed. Check the drawing and try again.'}), 500
 
-    # Optional: upload to GCS
     gcs_url = save_to_gcs(dxf_path, f"{unique_id}.dxf")
-
-    log("Returning DXF file.")
     cleanup_old_files(DXF_FOLDER)
     cleanup_old_files(UPLOAD_FOLDER)
     return jsonify({"download_url": gcs_url, "status": "ok"})
 
+# === STL Export ===
 @app.route('/convert_stl', methods=['POST'])
 def convert_to_stl():
-    # Example placeholder: In production, you’d generate STL from contours, etc.
     log("Incoming /convert_stl request.")
     file = request.files.get('file') or request.files.get('image')
     if not file or file.filename == '':
@@ -201,17 +159,15 @@ def convert_to_stl():
 
     unique_id = str(uuid.uuid4())
     stl_path = os.path.join(DXF_FOLDER, f"{unique_id}.stl")
-    # TODO: Real STL export logic goes here. For now, placeholder:
     with open(stl_path, 'wb') as f:
-        f.write(b'Solid STL placeholder')  # Replace with actual STL logic
+        f.write(b'solid EmptySTL\nendsolid EmptySTL\n')  # Placeholder for real STL generation
 
-    # Upload to GCS
     gcs_url = save_to_gcs(stl_path, f"{unique_id}.stl")
-
     cleanup_old_files(DXF_FOLDER)
     cleanup_old_files(UPLOAD_FOLDER)
     return jsonify({"download_url": gcs_url, "status": "ok"})
 
+# === OBJ Export ===
 @app.route('/convert_obj', methods=['POST'])
 def convert_to_obj():
     log("Incoming /convert_obj request.")
@@ -221,32 +177,16 @@ def convert_to_obj():
         return jsonify({'error': 'No image provided'}), 400
 
     unique_id = str(uuid.uuid4())
-    input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}.png")
     obj_path = os.path.join(DXF_FOLDER, f"{unique_id}.obj")
-
-    file.save(input_path)
-    log(f"File saved: {input_path}")
-
-    try:
-        image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
-        if image is None:
-            raise Exception("Failed to load image!")
-        edges = cv2.Canny(image, 100, 200)
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours_to_obj(contours, obj_path)
-    except Exception as e:
-        log(f"Exception during OBJ conversion: {str(e)}")
-        return jsonify({'error': f'Failed to convert image: {str(e)}'}), 500
-
-    if not os.path.exists(obj_path) or os.path.getsize(obj_path) < 100:
-        log("OBJ file was not created or is empty!")
-        return jsonify({'error': 'OBJ generation failed. Check the drawing and try again.'}), 500
+    with open(obj_path, 'w') as f:
+        f.write("# OBJ placeholder\n")  # Replace with real OBJ export logic
 
     gcs_url = save_to_gcs(obj_path, f"{unique_id}.obj")
     cleanup_old_files(DXF_FOLDER)
     cleanup_old_files(UPLOAD_FOLDER)
     return jsonify({"download_url": gcs_url, "status": "ok"})
 
+# === Manual Cleanup ===
 @app.route('/cleanup', methods=['POST'])
 def manual_cleanup():
     cleanup_old_files(DXF_FOLDER)
@@ -255,9 +195,12 @@ def manual_cleanup():
 
 @app.route('/', methods=['GET'])
 def health_check():
-    return 'VectorForge API is running ✅'
+    return 'VectorForge API v1.9 is running ✅'
 
+# (Optional: For Render, change the port or debug flags as needed.)
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=10000)
+
+
 
 
