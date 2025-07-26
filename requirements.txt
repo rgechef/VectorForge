@@ -1,5 +1,7 @@
 flask
-werkzeug
+flask-cors
 Pillow
-svgpathtools
+numpy
 ezdxf
+svgpathtools
+git+https://github.com/flupke/pypotrace.git
