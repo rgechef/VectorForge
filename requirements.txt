@@ -1,6 +1,4 @@
 flask
 werkzeug
 Pillow
-git+https://github.com/flupke/pypotrace.git
 svgpathtools
-
