@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import uuid
@@ -11,21 +11,24 @@ from PIL import Image
 from xml.dom import minidom
 from datetime import datetime, timedelta
 
-# ---- GOOGLE CLOUD ----
 from google.cloud import storage
+
+# STL/3D imports
+import trimesh
+from shapely.geometry import Polygon, MultiPolygon
 
 app = Flask(__name__)
 CORS(app)
 
 UPLOAD_FOLDER = 'uploads'
-OUTPUT_FOLDER = 'output'
+DXF_FOLDER = 'output'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+os.makedirs(DXF_FOLDER, exist_ok=True)
 
 GCS_BUCKET = 'vectorforge-uploads'
 
 def log(msg):
-    print("==== [DEBUG] " + msg)
+    print("==== [DEBUG] " + str(msg))
 
 def raster_to_svg_paths(image_path):
     log(f"Reading image: {image_path}")
@@ -82,15 +85,8 @@ def svg_to_dxf(svg_path, dxf_path):
     doc.saveas(dxf_path)
     log("DXF saved.")
 
-def paths_to_stl(paths, stl_path):
-    # This function is a placeholder. Replace with real 2D-to-3D STL logic as needed.
-    # You could use solidpython, trimesh, or meshpy for advanced workflows.
-    log(f"Saving dummy STL to: {stl_path}")
-    with open(stl_path, 'wb') as f:
-        f.write(b'solid dummy\nendsolid dummy\n')
-    log("Dummy STL written.")
-
 def save_to_gcs(local_path, dest_blob_name):
+    """Upload a local file to Google Cloud Storage."""
     client = storage.Client()
     bucket = client.bucket(GCS_BUCKET)
     blob = bucket.blob(dest_blob_name)
@@ -99,6 +95,7 @@ def save_to_gcs(local_path, dest_blob_name):
     return f"https://storage.googleapis.com/{GCS_BUCKET}/{dest_blob_name}"
 
 def cleanup_old_files(folder, extensions=['.dxf', '.svg', '.stl', '.png'], max_age_hours=2):
+    """Delete files older than max_age_hours in given folder with allowed extensions."""
     now = datetime.now()
     for fname in os.listdir(folder):
         if any(fname.lower().endswith(ext) for ext in extensions):
@@ -111,6 +108,30 @@ def cleanup_old_files(folder, extensions=['.dxf', '.svg', '.stl', '.png'], max_a
             except Exception as e:
                 log(f"Cleanup error: {e}")
 
+def svg_to_stl(svg_path, stl_path, height=1.0):
+    """Converts a simple SVG (single closed path) to a flat STL file (extrusion)."""
+    from svgpathtools import svg2paths
+    import shapely
+    import shapely.ops
+
+    paths, _ = svg2paths(svg_path)
+    polygons = []
+    for path in paths:
+        pts = []
+        for segment in path:
+            # Use only Line segments
+            if isinstance(segment, Line):
+                pts.append((segment.start.real, segment.start.imag))
+        if len(pts) > 2:
+            polygons.append(Polygon(pts))
+    if not polygons:
+        raise Exception("No closed polygons found in SVG for STL export.")
+
+    multi = MultiPolygon(polygons)
+    mesh = trimesh.creation.extrude_polygon(multi, height)
+    mesh.export(stl_path)
+    log(f"STL saved: {stl_path}")
+
 @app.route('/convert', methods=['POST'])
 def convert_image():
     log("Incoming /convert request.")
@@ -119,12 +140,10 @@ def convert_image():
         log("No file/image provided.")
         return jsonify({'error': 'No image provided'}), 400
 
-    output_format = request.args.get('format', 'dxf').lower()
     unique_id = str(uuid.uuid4())
     input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}.png")
-    svg_path = os.path.join(OUTPUT_FOLDER, f"{unique_id}.svg")
-    dxf_path = os.path.join(OUTPUT_FOLDER, f"{unique_id}.dxf")
-    stl_path = os.path.join(OUTPUT_FOLDER, f"{unique_id}.stl")
+    svg_path = os.path.join(DXF_FOLDER, f"{unique_id}.svg")
+    dxf_path = os.path.join(DXF_FOLDER, f"{unique_id}.dxf")
 
     file.save(input_path)
     log(f"File saved: {input_path}")
@@ -135,38 +154,70 @@ def convert_image():
             log("No vector paths generated from image!")
             return jsonify({'error': 'No paths found in image. Try a darker or clearer drawing.'}), 400
         save_svg(paths, svg_path)
-        if output_format == 'stl':
-            paths_to_stl(paths, stl_path)
-            target_path = stl_path
-            ext = 'stl'
-        else:
-            svg_to_dxf(svg_path, dxf_path)
-            target_path = dxf_path
-            ext = 'dxf'
+        svg_to_dxf(svg_path, dxf_path)
     except Exception as e:
         log(f"Exception during conversion: {str(e)}")
         return jsonify({'error': f'Failed to convert image: {str(e)}'}), 500
 
-    # Confirm file was created and is non-empty before returning
-    if not os.path.exists(target_path) or os.path.getsize(target_path) < 20:
-        log(f"{ext.upper()} file was not created or is empty!")
-        return jsonify({'error': f'{ext.upper()} generation failed. Check the drawing and try again.'}), 500
+    if not os.path.exists(dxf_path) or os.path.getsize(dxf_path) < 100:
+        log("DXF file was not created or is empty!")
+        return jsonify({'error': 'DXF generation failed. Check the drawing and try again.'}), 500
 
-    # Upload to GCS
-    gcs_url = save_to_gcs(target_path, f"{unique_id}.{ext}")
+    gcs_url = save_to_gcs(dxf_path, f"outputs/{unique_id}.dxf")
 
-    log(f"Returning {ext.upper()} file.")
-    cleanup_old_files(OUTPUT_FOLDER)
+    log("Returning DXF file.")
+    cleanup_old_files(DXF_FOLDER)
+    cleanup_old_files(UPLOAD_FOLDER)
+    return jsonify({"download_url": gcs_url, "status": "ok"})
+
+@app.route('/convert_stl', methods=['POST'])
+def convert_to_stl():
+    log("Incoming /convert_stl request.")
+    file = request.files.get('file') or request.files.get('image')
+    if not file or file.filename == '':
+        log("No file/image provided.")
+        return jsonify({'error': 'No image provided'}), 400
+
+    unique_id = str(uuid.uuid4())
+    input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}.png")
+    svg_path = os.path.join(DXF_FOLDER, f"{unique_id}.svg")
+    stl_path = os.path.join(DXF_FOLDER, f"{unique_id}.stl")
+
+    file.save(input_path)
+    log(f"File saved: {input_path}")
+
+    try:
+        paths = raster_to_svg_paths(input_path)
+        if not paths:
+            log("No vector paths generated from image!")
+            return jsonify({'error': 'No paths found in image. Try a darker or clearer drawing.'}), 400
+        save_svg(paths, svg_path)
+        svg_to_stl(svg_path, stl_path, height=1.0)
+    except Exception as e:
+        log(f"Exception during STL conversion: {str(e)}")
+        return jsonify({'error': f'Failed to convert image to STL: {str(e)}'}), 500
+
+    if not os.path.exists(stl_path) or os.path.getsize(stl_path) < 100:
+        log("STL file was not created or is empty!")
+        return jsonify({'error': 'STL generation failed. Check the drawing and try again.'}), 500
+
+    gcs_url = save_to_gcs(stl_path, f"outputs/{unique_id}.stl")
+
+    cleanup_old_files(DXF_FOLDER)
     cleanup_old_files(UPLOAD_FOLDER)
     return jsonify({"download_url": gcs_url, "status": "ok"})
 
 @app.route('/cleanup', methods=['POST'])
 def manual_cleanup():
-    cleanup_old_files(OUTPUT_FOLDER)
+    cleanup_old_files(DXF_FOLDER)
     cleanup_old_files(UPLOAD_FOLDER)
     return jsonify({'status': 'Cleanup complete.'})
 
 @app.route('/', methods=['GET'])
 def health_check():
     return 'VectorForge API is running ✅'
+
+if __name__ == '__main__':
+    app.run(debug=False, host='0.0.0.0', port=10000)
+
 
