@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: vectorforge-apid
+    name: vectorforge-api
     runtime: python
     buildCommand: |
       apt-get update && \
