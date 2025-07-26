@@ -1,7 +1,21 @@
+# ---- CORE WEB/API ----
 flask
 flask-cors
-Pillow
+
+# ---- IMAGE/GRAPHICS ----
+opencv-python
 numpy
+Pillow
+
+# ---- VECTOR/DXF ----
 ezdxf
 svgpathtools
-opencv-python-headless
+
+# ---- GOOGLE CLOUD STORAGE ----
+google-cloud-storage
+
+# ---- WSGI SERVER FOR PRODUCTION ----
+gunicorn
+
+# ---- (OPTIONAL) for SVG Processing ----
+svgwrite
