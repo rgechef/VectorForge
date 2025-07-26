@@ -3,7 +3,6 @@ from flask_cors import CORS
 from PIL import Image
 import os
 import uuid
-import potrace
 import ezdxf
 import numpy as np
 
