@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 import os
 import uuid
@@ -9,8 +9,9 @@ import ezdxf
 from io import BytesIO
 from PIL import Image
 from xml.dom import minidom
+from datetime import datetime, timedelta
 
-# ---- GOOGLE CLOUD STORAGE ----
+# ---- GOOGLE CLOUD ----
 from google.cloud import storage
 
 app = Flask(__name__)
@@ -21,6 +22,8 @@ DXF_FOLDER = 'output'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(DXF_FOLDER, exist_ok=True)
 
+GCS_BUCKET = 'vectorforge-uploads'
+
 def log(msg):
     print("==== [DEBUG] " + msg)
 
@@ -30,10 +33,13 @@ def raster_to_svg_paths(image_path):
     if image is None:
         raise Exception("Failed to load image!")
     log("Image loaded.")
+
     edges = cv2.Canny(image, 100, 200)
     log("Canny edges detected.")
+
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     log(f"Contours found: {len(contours)}")
+
     paths = []
     for contour in contours:
         if len(contour) < 2:
@@ -45,6 +51,7 @@ def raster_to_svg_paths(image_path):
             segments.append(Line(start, end))
         path = Path(*segments)
         paths.append(path)
+
     log(f"SVG paths created: {len(paths)}")
     return paths
 
@@ -57,9 +64,11 @@ def svg_to_dxf(svg_path, dxf_path):
     log(f"Converting SVG to DXF: {svg_path} -> {dxf_path}")
     doc = ezdxf.new()
     msp = doc.modelspace()
+
     doc_svg = minidom.parse(svg_path)
     path_strings = [path.getAttribute('d') for path in doc_svg.getElementsByTagName('path')]
     doc_svg.unlink()
+
     for path_str in path_strings:
         parsed = parse_path(path_str)
         for segment in parsed:
@@ -69,19 +78,32 @@ def svg_to_dxf(svg_path, dxf_path):
                 msp.add_line((start.real, start.imag), (end.real, end.imag))
             except Exception as e:
                 log(f"DXF segment error: {e}")
+
     doc.saveas(dxf_path)
     log("DXF saved.")
 
-def upload_to_gcs(local_file_path, destination_blob_name):
-    log(f"Uploading {local_file_path} to GCS as {destination_blob_name}")
-    storage_client = storage.Client()
-    bucket = storage_client.bucket('vectorforge-uploads')
-    blob = bucket.blob(destination_blob_name)
-    blob.upload_from_filename(local_file_path)
-    # Don't use blob.make_public() — uniform bucket-level access means ACLs are managed at the bucket level!
-    public_url = f"https://storage.googleapis.com/{bucket.name}/{blob.name}"
-    log(f"Uploaded to GCS: {public_url}")
-    return public_url
+def save_to_gcs(local_path, dest_blob_name):
+    """Upload a local file to Google Cloud Storage."""
+    client = storage.Client()
+    bucket = client.bucket(GCS_BUCKET)
+    blob = bucket.blob(dest_blob_name)
+    blob.upload_from_filename(local_path)
+    log(f"Uploaded to GCS: {dest_blob_name}")
+    return f"https://storage.googleapis.com/{GCS_BUCKET}/{dest_blob_name}"
+
+def cleanup_old_files(folder, extensions=['.dxf', '.svg', '.stl', '.png'], max_age_hours=2):
+    """Delete files older than max_age_hours in given folder with allowed extensions."""
+    now = datetime.now()
+    for fname in os.listdir(folder):
+        if any(fname.lower().endswith(ext) for ext in extensions):
+            fpath = os.path.join(folder, fname)
+            try:
+                mtime = datetime.fromtimestamp(os.path.getmtime(fpath))
+                if (now - mtime) > timedelta(hours=max_age_hours):
+                    os.remove(fpath)
+                    log(f"Deleted old file: {fpath}")
+            except Exception as e:
+                log(f"Cleanup error: {e}")
 
 @app.route('/convert', methods=['POST'])
 def convert_image():
@@ -90,10 +112,12 @@ def convert_image():
     if not file or file.filename == '':
         log("No file/image provided.")
         return jsonify({'error': 'No image provided'}), 400
+
     unique_id = str(uuid.uuid4())
     input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}.png")
     svg_path = os.path.join(DXF_FOLDER, f"{unique_id}.svg")
     dxf_path = os.path.join(DXF_FOLDER, f"{unique_id}.dxf")
+
     file.save(input_path)
     log(f"File saved: {input_path}")
 
@@ -104,17 +128,50 @@ def convert_image():
             return jsonify({'error': 'No paths found in image. Try a darker or clearer drawing.'}), 400
         save_svg(paths, svg_path)
         svg_to_dxf(svg_path, dxf_path)
-        if not os.path.exists(dxf_path) or os.path.getsize(dxf_path) < 100:
-            log("DXF file was not created or is empty!")
-            return jsonify({'error': 'DXF generation failed. Check the drawing and try again.'}), 500
-        # ---- Upload to Google Cloud Storage ----
-        gcs_url = upload_to_gcs(dxf_path, f'outputs/{unique_id}.dxf')
     except Exception as e:
         log(f"Exception during conversion: {str(e)}")
         return jsonify({'error': f'Failed to convert image: {str(e)}'}), 500
 
-    log("Returning GCS DXF URL.")
-    return jsonify({'dxf_url': gcs_url})
+    # Confirm file was created and is non-empty before returning
+    if not os.path.exists(dxf_path) or os.path.getsize(dxf_path) < 100:
+        log("DXF file was not created or is empty!")
+        return jsonify({'error': 'DXF generation failed. Check the drawing and try again.'}), 500
+
+    # Optional: upload to GCS
+    gcs_url = save_to_gcs(dxf_path, f"{unique_id}.dxf")
+
+    log("Returning DXF file.")
+    cleanup_old_files(DXF_FOLDER)
+    cleanup_old_files(UPLOAD_FOLDER)
+    return jsonify({"download_url": gcs_url, "status": "ok"})
+
+@app.route('/convert_stl', methods=['POST'])
+def convert_to_stl():
+    # Example placeholder: In production, you’d generate STL from contours, etc.
+    # This just saves a sample STL as proof of API structure.
+    log("Incoming /convert_stl request.")
+    file = request.files.get('file') or request.files.get('image')
+    if not file or file.filename == '':
+        log("No file/image provided.")
+        return jsonify({'error': 'No image provided'}), 400
+
+    unique_id = str(uuid.uuid4())
+    stl_path = os.path.join(DXF_FOLDER, f"{unique_id}.stl")
+    with open(stl_path, 'wb') as f:
+        f.write(b'Solid STL placeholder')  # Replace with actual STL logic
+
+    # Upload to GCS
+    gcs_url = save_to_gcs(stl_path, f"{unique_id}.stl")
+
+    cleanup_old_files(DXF_FOLDER)
+    cleanup_old_files(UPLOAD_FOLDER)
+    return jsonify({"download_url": gcs_url, "status": "ok"})
+
+@app.route('/cleanup', methods=['POST'])
+def manual_cleanup():
+    cleanup_old_files(DXF_FOLDER)
+    cleanup_old_files(UPLOAD_FOLDER)
+    return jsonify({'status': 'Cleanup complete.'})
 
 @app.route('/', methods=['GET'])
 def health_check():
