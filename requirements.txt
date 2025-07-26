@@ -1,4 +1,4 @@
-# ---- CORE WEB/API ----
+## ---- CORE WEB/API ----
 flask
 flask-cors
 
@@ -10,6 +10,10 @@ Pillow
 # ---- VECTOR/DXF ----
 ezdxf
 svgpathtools
+
+# ---- STL/3D ----
+trimesh
+shapely
 
 # ---- GOOGLE CLOUD STORAGE ----
 google-cloud-storage
