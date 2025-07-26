@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 import os
 from werkzeug.utils import secure_filename
 from PIL import Image
-import potrace
+import svgpathtools
 import numpy as np
 import svgwrite
 import ezdxf
