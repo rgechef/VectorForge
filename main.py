@@ -1,54 +1,96 @@
+
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
-from PIL import Image
 import os
 import uuid
-import potrace
-import ezdxf
+import cv2
 import numpy as np
-import io
+from svgpathtools import Path, Line, wsvg
+import ezdxf
+from io import BytesIO
+from PIL import Image
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for external apps like 3DShapeSnap.ai
+CORS(app)
 
-@app.route('/')
-def index():
-    return jsonify({"status": "VectorForge is live!"})
+UPLOAD_FOLDER = 'uploads'
+DXF_FOLDER = 'output'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(DXF_FOLDER, exist_ok=True)
+
+def raster_to_svg_paths(image_path):
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    edges = cv2.Canny(image, 100, 200)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    paths = []
+    for contour in contours:
+        if len(contour) < 2:
+            continue
+        segments = []
+        for i in range(len(contour) - 1):
+            start = complex(contour[i][0][0], -contour[i][0][1])
+            end = complex(contour[i + 1][0][0], -contour[i + 1][0][1])
+            segments.append(Line(start, end))
+        path = Path(*segments)
+        paths.append(path)
+
+    return paths
+
+def save_svg(paths, output_path):
+    wsvg(paths, filename=output_path)
+
+def svg_to_dxf(svg_path, dxf_path):
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+
+    # Parse the SVG file
+    from xml.dom import minidom
+    doc_svg = minidom.parse(svg_path)
+    path_strings = [path.getAttribute('d') for path in doc_svg.getElementsByTagName('path')]
+    doc_svg.unlink()
+
+    from svgpathtools import parse_path
+    for path_str in path_strings:
+        parsed = parse_path(path_str)
+        for segment in parsed:
+            try:
+                start = segment.start
+                end = segment.end
+                msp.add_line((start.real, start.imag), (end.real, end.imag))
+            except:
+                pass
+
+    doc.saveas(dxf_path)
 
 @app.route('/convert', methods=['POST'])
-def convert():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-    file = request.files['file']
-    output_format = request.form.get('format', 'dxf')
+def convert_image():
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
 
-    if output_format not in ['dxf', 'stl']:
-        return jsonify({"error": "Invalid format. Use 'dxf' or 'stl'."}), 400
+    image = request.files['image']
+    if image.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
 
-    # Load image
-    image = Image.open(file).convert("L")  # grayscale
-    bitmap = potrace.Bitmap(np.array(image) > 128)
-    path = bitmap.trace()
+    unique_id = str(uuid.uuid4())
+    input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}.png")
+    svg_path = os.path.join(DXF_FOLDER, f"{unique_id}.svg")
+    dxf_path = os.path.join(DXF_FOLDER, f"{unique_id}.dxf")
 
-    # Prepare DXF or STL content
-    filename = f"{uuid.uuid4()}.{output_format}"
-    filepath = os.path.join("/tmp", filename)
+    image.save(input_path)
 
-    if output_format == 'dxf':
-        doc = ezdxf.new()
-        msp = doc.modelspace()
-        for curve in path:
-            for segment in curve:
-                start = segment.start_point
-                end = segment.end_point
-                msp.add_line((start.x, start.y), (end.x, end.y))
-        doc.saveas(filepath)
-    else:
-        # Placeholder: STL conversion logic to be added
-        with open(filepath, "w") as f:
-            f.write("solid placeholder\nendsolid\n")
+    try:
+        paths = raster_to_svg_paths(input_path)
+        save_svg(paths, svg_path)
+        svg_to_dxf(svg_path, dxf_path)
+    except Exception as e:
+        return jsonify({'error': f'Failed to convert image: {str(e)}'}), 500
 
-    return send_file(filepath, as_attachment=True)
+    return send_file(dxf_path, as_attachment=True)
+
+@app.route('/', methods=['GET'])
+def health_check():
+    return 'VectorForge API is running ✅'
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    app.run(debug=False, host='0.0.0.0', port=10000)
