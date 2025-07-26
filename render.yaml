@@ -1,3 +1,13 @@
-build:
-  packages:
-    - libpotrace-dev
+services:
+  - type: web
+    name: vectorforge-apid
+    runtime: python
+    buildCommand: |
+      apt-get update && \
+      apt-get install -y libpotrace-dev && \
+      pip install git+https://github.com/flupke/pypotrace.git && \
+      pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.12
