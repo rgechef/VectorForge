@@ -1,20 +1,18 @@
-# ---- CORE API (FastAPI) ----
+# ---- CORE WEB/API ----
 fastapi
 uvicorn
 
-# ---- IMAGE / GRAPHICS ----
+# ---- IMAGE/GRAPHICS ----
 opencv-python
 numpy
 Pillow
 
-# ---- VECTOR / DXF ----
+# ---- VECTOR/DXF ----
 ezdxf
 svgpathtools
-svgwrite
 
-# ---- CLOUD STORAGE (Optional for future) ----
+# ---- GOOGLE CLOUD STORAGE ----
 google-cloud-storage
 
-# ---- OPTIONAL: Logging or internal tooling ----
-# You can uncomment if needed later
-# loguru
+# ---- (OPTIONAL) for SVG Processing ----
+svgwrite
