@@ -1,7 +1,3 @@
-# ===============================
-# 3DShapeSnap.ai / VectorForge API
-# Version: v2.0 (2025-07-26)
-# ===============================
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
@@ -14,12 +10,8 @@ from io import BytesIO
 from PIL import Image
 from xml.dom import minidom
 from datetime import datetime, timedelta
-
-# --- 3D MESH ---
-import trimesh
-
-# --- GOOGLE CLOUD ---
 from google.cloud import storage
+import cadquery as cq
 
 app = Flask(__name__)
 CORS(app)
@@ -90,7 +82,6 @@ def svg_to_dxf(svg_path, dxf_path):
     log("DXF saved.")
 
 def save_to_gcs(local_path, dest_blob_name):
-    """Upload a local file to Google Cloud Storage and return a public URL."""
     client = storage.Client()
     bucket = client.bucket(GCS_BUCKET)
     blob = bucket.blob(dest_blob_name)
@@ -98,8 +89,7 @@ def save_to_gcs(local_path, dest_blob_name):
     log(f"Uploaded to GCS: {dest_blob_name}")
     return f"https://storage.googleapis.com/{GCS_BUCKET}/{dest_blob_name}"
 
-def cleanup_old_files(folder, extensions=['.dxf', '.svg', '.stl', '.obj', '.png'], max_age_hours=2):
-    """Delete files older than max_age_hours in given folder with allowed extensions."""
+def cleanup_old_files(folder, extensions=['.dxf', '.svg', '.step', '.png'], max_age_hours=2):
     now = datetime.now()
     for fname in os.listdir(folder):
         if any(fname.lower().endswith(ext) for ext in extensions):
@@ -140,7 +130,6 @@ def convert_image():
         log(f"Exception during conversion: {str(e)}")
         return jsonify({'error': f'Failed to convert image: {str(e)}'}), 500
 
-    # Confirm file was created and is non-empty before returning
     if not os.path.exists(dxf_path) or os.path.getsize(dxf_path) < 100:
         log("DXF file was not created or is empty!")
         return jsonify({'error': 'DXF generation failed. Check the drawing and try again.'}), 500
@@ -150,98 +139,36 @@ def convert_image():
     cleanup_old_files(UPLOAD_FOLDER)
     return jsonify({"download_url": gcs_url, "status": "ok"})
 
-# === STL Export ===
-@app.route('/convert_stl', methods=['POST'])
-def convert_to_stl():
-    log("Incoming /convert_stl request.")
+# === STEP Export ===
+@app.route('/convert_step', methods=['POST'])
+def convert_to_step():
+    log("Incoming /convert_step request.")
     file = request.files.get('file') or request.files.get('image')
     if not file or file.filename == '':
         log("No file/image provided.")
         return jsonify({'error': 'No image provided'}), 400
 
     unique_id = str(uuid.uuid4())
-    input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}.png")
-    file.save(input_path)
+    step_path = os.path.join(DXF_FOLDER, f"{unique_id}.step")
 
-    # Process image to contours
-    image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
-    edges = cv2.Canny(image, 100, 200)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # --- Example: Create a simple 3D block (update with real logic as needed) ---
+    try:
+        result = (
+            cq.Workplane("XY")
+            .rect(40, 20)
+            .extrude(5)
+        )
+        result.val().exportStep(step_path)
+        log(f"STEP saved: {step_path}")
+    except Exception as e:
+        log(f"CadQuery STEP generation error: {str(e)}")
+        return jsonify({'error': f'Failed to generate STEP: {str(e)}'}), 500
 
-    meshes = []
-    for contour in contours:
-        if len(contour) < 3:  # Need at least 3 points for a face
-            continue
-        points_2d = np.squeeze(contour)
-        if points_2d.ndim != 2:
-            continue
-        # Ensure shape is closed
-        points_2d = np.vstack([points_2d, points_2d[0]])
-        try:
-            polygon = trimesh.path.polygons.polygon_smooth(points_2d)
-            mesh = trimesh.creation.extrude_polygon(polygon, height=2.0)
-            meshes.append(mesh)
-        except Exception as e:
-            log(f"Extrude error: {e}")
-
-    if not meshes:
-        return jsonify({'error': 'No valid contours found for STL mesh.'}), 400
-
-    combined = trimesh.util.concatenate(meshes)
-    stl_path = os.path.join(DXF_FOLDER, f"{unique_id}.stl")
-    combined.export(stl_path)
-
-    gcs_url = save_to_gcs(stl_path, f"{unique_id}.stl")
+    gcs_url = save_to_gcs(step_path, f"{unique_id}.step")
     cleanup_old_files(DXF_FOLDER)
     cleanup_old_files(UPLOAD_FOLDER)
     return jsonify({"download_url": gcs_url, "status": "ok"})
 
-# === OBJ Export ===
-@app.route('/convert_obj', methods=['POST'])
-def convert_to_obj():
-    log("Incoming /convert_obj request.")
-    file = request.files.get('file') or request.files.get('image')
-    if not file or file.filename == '':
-        log("No file/image provided.")
-        return jsonify({'error': 'No image provided'}), 400
-
-    unique_id = str(uuid.uuid4())
-    input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}.png")
-    file.save(input_path)
-
-    # Process image to contours
-    image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
-    edges = cv2.Canny(image, 100, 200)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    meshes = []
-    for contour in contours:
-        if len(contour) < 3:  # Need at least 3 points for a face
-            continue
-        points_2d = np.squeeze(contour)
-        if points_2d.ndim != 2:
-            continue
-        points_2d = np.vstack([points_2d, points_2d[0]])
-        try:
-            polygon = trimesh.path.polygons.polygon_smooth(points_2d)
-            mesh = trimesh.creation.extrude_polygon(polygon, height=2.0)
-            meshes.append(mesh)
-        except Exception as e:
-            log(f"Extrude error: {e}")
-
-    if not meshes:
-        return jsonify({'error': 'No valid contours found for OBJ mesh.'}), 400
-
-    combined = trimesh.util.concatenate(meshes)
-    obj_path = os.path.join(DXF_FOLDER, f"{unique_id}.obj")
-    combined.export(obj_path)
-
-    gcs_url = save_to_gcs(obj_path, f"{unique_id}.obj")
-    cleanup_old_files(DXF_FOLDER)
-    cleanup_old_files(UPLOAD_FOLDER)
-    return jsonify({"download_url": gcs_url, "status": "ok"})
-
-# === Manual Cleanup ===
 @app.route('/cleanup', methods=['POST'])
 def manual_cleanup():
     cleanup_old_files(DXF_FOLDER)
@@ -250,7 +177,7 @@ def manual_cleanup():
 
 @app.route('/', methods=['GET'])
 def health_check():
-    return 'VectorForge API (Geometry v2.0) is running ✅'
+    return 'VectorForge API (DXF + STEP) v2.0 is running ✅'
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=10000)
