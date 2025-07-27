@@ -1,18 +1,17 @@
-# Use CadQuery’s official base image with OCP pre-installed
+# Use the official CadQuery image with OCP pre-installed
 FROM cadquery/cadquery:latest
 
 # Set working directory
 WORKDIR /app
 
-# Copy project files
-COPY . /app
+# Copy all files
+COPY . .
 
-# Install Python dependencies
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+# Install Python dependencies (your own packages)
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose the port Render will assign
+# Expose default port
 EXPOSE 8000
 
-# Run the FastAPI server
+# Start the FastAPI app
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
