@@ -13,7 +13,6 @@ svgpathtools
 
 # ---- STL/3D ----
 trimesh
-shapely
 
 # ---- GOOGLE CLOUD STORAGE ----
 google-cloud-storage
