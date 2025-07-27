@@ -74,3 +74,15 @@ def get_block_library():
             "dxf_file": "/static/dxf/grip_handle.dxf"
         }
     ])
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
+from fastapi import Request
+
+templates = Jinja2Templates(directory="templates")
+
+@app.get("/viewer", response_class=HTMLResponse)
+async def viewer(request: Request, file: str):
+    return templates.TemplateResponse("viewer.html", {
+        "request": request,
+        "filename": file
+    })
