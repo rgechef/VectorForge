@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 import os
 import uuid
@@ -10,8 +10,9 @@ from io import BytesIO
 from PIL import Image
 from xml.dom import minidom
 from datetime import datetime, timedelta
+
+# ---- GOOGLE CLOUD ----
 from google.cloud import storage
-import cadquery as cq
 
 app = Flask(__name__)
 CORS(app)
@@ -82,6 +83,7 @@ def svg_to_dxf(svg_path, dxf_path):
     log("DXF saved.")
 
 def save_to_gcs(local_path, dest_blob_name):
+    """Upload a local file to Google Cloud Storage and return a public URL."""
     client = storage.Client()
     bucket = client.bucket(GCS_BUCKET)
     blob = bucket.blob(dest_blob_name)
@@ -89,7 +91,8 @@ def save_to_gcs(local_path, dest_blob_name):
     log(f"Uploaded to GCS: {dest_blob_name}")
     return f"https://storage.googleapis.com/{GCS_BUCKET}/{dest_blob_name}"
 
-def cleanup_old_files(folder, extensions=['.dxf', '.svg', '.step', '.png'], max_age_hours=2):
+def cleanup_old_files(folder, extensions=['.dxf', '.svg', '.png'], max_age_hours=2):
+    """Delete files older than max_age_hours in given folder with allowed extensions."""
     now = datetime.now()
     for fname in os.listdir(folder):
         if any(fname.lower().endswith(ext) for ext in extensions):
@@ -130,6 +133,7 @@ def convert_image():
         log(f"Exception during conversion: {str(e)}")
         return jsonify({'error': f'Failed to convert image: {str(e)}'}), 500
 
+    # Confirm file was created and is non-empty before returning
     if not os.path.exists(dxf_path) or os.path.getsize(dxf_path) < 100:
         log("DXF file was not created or is empty!")
         return jsonify({'error': 'DXF generation failed. Check the drawing and try again.'}), 500
@@ -139,36 +143,7 @@ def convert_image():
     cleanup_old_files(UPLOAD_FOLDER)
     return jsonify({"download_url": gcs_url, "status": "ok"})
 
-# === STEP Export ===
-@app.route('/convert_step', methods=['POST'])
-def convert_to_step():
-    log("Incoming /convert_step request.")
-    file = request.files.get('file') or request.files.get('image')
-    if not file or file.filename == '':
-        log("No file/image provided.")
-        return jsonify({'error': 'No image provided'}), 400
-
-    unique_id = str(uuid.uuid4())
-    step_path = os.path.join(DXF_FOLDER, f"{unique_id}.step")
-
-    # --- Example: Create a simple 3D block (update with real logic as needed) ---
-    try:
-        result = (
-            cq.Workplane("XY")
-            .rect(40, 20)
-            .extrude(5)
-        )
-        result.val().exportStep(step_path)
-        log(f"STEP saved: {step_path}")
-    except Exception as e:
-        log(f"CadQuery STEP generation error: {str(e)}")
-        return jsonify({'error': f'Failed to generate STEP: {str(e)}'}), 500
-
-    gcs_url = save_to_gcs(step_path, f"{unique_id}.step")
-    cleanup_old_files(DXF_FOLDER)
-    cleanup_old_files(UPLOAD_FOLDER)
-    return jsonify({"download_url": gcs_url, "status": "ok"})
-
+# === Manual Cleanup ===
 @app.route('/cleanup', methods=['POST'])
 def manual_cleanup():
     cleanup_old_files(DXF_FOLDER)
@@ -177,7 +152,7 @@ def manual_cleanup():
 
 @app.route('/', methods=['GET'])
 def health_check():
-    return 'VectorForge API (DXF + STEP) v2.0 is running ✅'
+    return 'VectorForge API (DXF-Only) is running ✅'
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=10000)
