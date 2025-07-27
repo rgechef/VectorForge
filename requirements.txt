@@ -20,4 +20,3 @@ google-cloud-storage
 
 # ---- WSGI SERVER FOR PRODUCTION ----
 gunicorn
-

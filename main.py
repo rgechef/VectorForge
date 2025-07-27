@@ -1,12 +1,16 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from app.routes import generate
 import os
 
 app = FastAPI()
 
 # Mount static folder
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Add dynamic CAD route
+app.include_router(generate.router, prefix="/api")
 
 # Block library
 block_library = [
@@ -60,18 +64,3 @@ block_library = [
         "dxf_file": "/static/dxf/grip_handle.dxf"
     }
 ]
-
-@app.get("/blocks")
-def get_blocks():
-    return JSONResponse(content={"blocks": block_library})
-
-@app.post("/convert")
-def convert_block(block_id: str = Query(...)):
-    block = next((b for b in block_library if b["id"] == block_id), None)
-    if block:
-        dxf_path = "." + block["dxf_file"]
-        if os.path.exists(dxf_path):
-            return FileResponse(dxf_path, media_type="application/dxf", filename=os.path.basename(dxf_path))
-        else:
-            return JSONResponse(status_code=404, content={"error": "DXF file not found"})
-    return JSONResponse(status_code=404, content={"error": "Block not found"})
