@@ -10,8 +10,8 @@ COPY . .
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port (Render listens on 0.0.0.0:10000+ internally)
-EXPOSE 8000
+# Expose the correct port (Render expects 10000)
+EXPOSE 10000
 
-# Start app using run.py
-CMD ["python", "run.py"]
+# Start FastAPI via Uvicorn
+CMD ["uvicorn", "main:app", "--host=0.0.0.0", "--port=10000"]
