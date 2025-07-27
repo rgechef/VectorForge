@@ -1,5 +1,7 @@
 # ---- 3D/CAD ----
-cadquery
+# --- Use CadQuery’s official release with all dependencies ---
+# (Replace the link below with the latest .whl from CadQuery releases if needed)
+https://github.com/CadQuery/cadquery/releases/download/2.3.1/cadquery-2.3.1-py3-none-any.whl
 
 # ---- GOOGLE CLOUD STORAGE ----
 google-cloud-storage
