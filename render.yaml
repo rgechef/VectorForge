@@ -1,7 +1,8 @@
 services:
   - type: web
-    name: vectorforge
+    name: vectorforge-backend
     env: docker
-    plan: free
+    plan: starter
+    dockerfilePath: ./Dockerfile
     autoDeploy: true
     healthCheckPath: /docs
