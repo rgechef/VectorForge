@@ -16,3 +16,6 @@ google-cloud-storage
 
 # ---- (OPTIONAL) for SVG Processing ----
 svgwrite
+
+# ---- WSGI SERVER FOR PRODUCTION ----
+gunicorn
