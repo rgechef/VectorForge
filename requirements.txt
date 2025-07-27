@@ -1,24 +1,11 @@
-## ---- CORE WEB/API ----
+cadquery
+google-cloud-storage
 flask
 flask-cors
-
-# ---- IMAGE/GRAPHICS ----
 opencv-python
 numpy
 Pillow
-
-# ---- VECTOR/DXF ----
 ezdxf
 svgpathtools
-
-# ---- STL/3D ----
-trimesh
-
-# ---- GOOGLE CLOUD STORAGE ----
-google-cloud-storage
-
-# ---- WSGI SERVER FOR PRODUCTION ----
 gunicorn
-
-# ---- (OPTIONAL) for SVG Processing ----
 svgwrite
