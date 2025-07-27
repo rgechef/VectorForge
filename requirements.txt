@@ -1,11 +1,3 @@
-# ---- 3D/CAD ----
-# --- Use CadQuery’s official release with all dependencies ---
-# (Replace the link below with the latest .whl from CadQuery releases if needed)
-https://github.com/CadQuery/cadquery/releases/download/2.3.1/cadquery-2.3.1-py3-none-any.whl
-
-# ---- GOOGLE CLOUD STORAGE ----
-google-cloud-storage
-
 # ---- CORE WEB/API ----
 flask
 flask-cors
@@ -19,8 +11,12 @@ Pillow
 ezdxf
 svgpathtools
 
+# ---- GOOGLE CLOUD STORAGE ----
+google-cloud-storage
+
 # ---- WSGI SERVER FOR PRODUCTION ----
 gunicorn
 
 # ---- (OPTIONAL) for SVG Processing ----
 svgwrite
+
