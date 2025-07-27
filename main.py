@@ -1,9 +1,8 @@
 # ===============================
 # 3DShapeSnap.ai / VectorForge API
-# Version: v1.9 (2025-07-26)
+# Version: v2.0 (2025-07-26)
 # ===============================
-
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import uuid
@@ -16,7 +15,10 @@ from PIL import Image
 from xml.dom import minidom
 from datetime import datetime, timedelta
 
-# ---- GOOGLE CLOUD ----
+# --- 3D MESH ---
+import trimesh
+
+# --- GOOGLE CLOUD ---
 from google.cloud import storage
 
 app = Flask(__name__)
@@ -158,9 +160,36 @@ def convert_to_stl():
         return jsonify({'error': 'No image provided'}), 400
 
     unique_id = str(uuid.uuid4())
+    input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}.png")
+    file.save(input_path)
+
+    # Process image to contours
+    image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
+    edges = cv2.Canny(image, 100, 200)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    meshes = []
+    for contour in contours:
+        if len(contour) < 3:  # Need at least 3 points for a face
+            continue
+        points_2d = np.squeeze(contour)
+        if points_2d.ndim != 2:
+            continue
+        # Ensure shape is closed
+        points_2d = np.vstack([points_2d, points_2d[0]])
+        try:
+            polygon = trimesh.path.polygons.polygon_smooth(points_2d)
+            mesh = trimesh.creation.extrude_polygon(polygon, height=2.0)
+            meshes.append(mesh)
+        except Exception as e:
+            log(f"Extrude error: {e}")
+
+    if not meshes:
+        return jsonify({'error': 'No valid contours found for STL mesh.'}), 400
+
+    combined = trimesh.util.concatenate(meshes)
     stl_path = os.path.join(DXF_FOLDER, f"{unique_id}.stl")
-    with open(stl_path, 'wb') as f:
-        f.write(b'solid EmptySTL\nendsolid EmptySTL\n')  # Placeholder for real STL generation
+    combined.export(stl_path)
 
     gcs_url = save_to_gcs(stl_path, f"{unique_id}.stl")
     cleanup_old_files(DXF_FOLDER)
@@ -177,9 +206,35 @@ def convert_to_obj():
         return jsonify({'error': 'No image provided'}), 400
 
     unique_id = str(uuid.uuid4())
+    input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}.png")
+    file.save(input_path)
+
+    # Process image to contours
+    image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
+    edges = cv2.Canny(image, 100, 200)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    meshes = []
+    for contour in contours:
+        if len(contour) < 3:  # Need at least 3 points for a face
+            continue
+        points_2d = np.squeeze(contour)
+        if points_2d.ndim != 2:
+            continue
+        points_2d = np.vstack([points_2d, points_2d[0]])
+        try:
+            polygon = trimesh.path.polygons.polygon_smooth(points_2d)
+            mesh = trimesh.creation.extrude_polygon(polygon, height=2.0)
+            meshes.append(mesh)
+        except Exception as e:
+            log(f"Extrude error: {e}")
+
+    if not meshes:
+        return jsonify({'error': 'No valid contours found for OBJ mesh.'}), 400
+
+    combined = trimesh.util.concatenate(meshes)
     obj_path = os.path.join(DXF_FOLDER, f"{unique_id}.obj")
-    with open(obj_path, 'w') as f:
-        f.write("# OBJ placeholder\n")  # Replace with real OBJ export logic
+    combined.export(obj_path)
 
     gcs_url = save_to_gcs(obj_path, f"{unique_id}.obj")
     cleanup_old_files(DXF_FOLDER)
@@ -195,12 +250,7 @@ def manual_cleanup():
 
 @app.route('/', methods=['GET'])
 def health_check():
-    return 'VectorForge API v1.9 is running ✅'
+    return 'VectorForge API (Geometry v2.0) is running ✅'
 
-# (Optional: For Render, change the port or debug flags as needed.)
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=10000)
-
-
-
-
