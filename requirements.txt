@@ -1,22 +1,12 @@
-# ---- CORE WEB/API ----
 fastapi
 uvicorn
-
-# ---- IMAGE/GRAPHICS ----
+jinja2
 opencv-python
 numpy
 Pillow
-
-# ---- VECTOR/DXF ----
 ezdxf
 svgpathtools
 svgwrite
-
-# ---- 3D MODELING ----
 cadquery
-
-# ---- GOOGLE CLOUD STORAGE ----
 google-cloud-storage
-
-# ---- WSGI SERVER FOR PRODUCTION ----
 gunicorn
