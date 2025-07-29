@@ -4,9 +4,8 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import generate
+from google.cloud import storage
 import os
-from pathlib import Path
-import shutil
 
 app = FastAPI(
     title="VectorForge",
@@ -23,13 +22,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static file directory (for STL/OBJ files and uploaded results)
-UPLOAD_DIR = "static/uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# Mount static file directory (for any prebuilt smart blocks)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Serve templates for HTML rendering
 templates = Jinja2Templates(directory="templates")
+
+# Google Cloud Storage upload function
+def upload_file_to_gcs(file_data, filename, bucket_name="3dshapesnap-uploads"):
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(filename)
+    blob.upload_from_string(file_data)
+    # Make public (for direct download; comment this if you want private)
+    blob.make_public()
+    return blob.public_url
 
 # Root health check
 @app.get("/")
@@ -42,18 +49,17 @@ app.include_router(generate.router, prefix="/api")
 # --- DXF/STL Conversion File Upload Endpoint (POST /convert) ---
 @app.post("/convert")
 async def convert_file(file: UploadFile = File(...)):
-    # Save the uploaded file to the static/uploads directory
-    file_location = os.path.join(UPLOAD_DIR, file.filename)
-    with open(file_location, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # Read uploaded file data
+    file_data = await file.read()
+    filename = file.filename
 
-    # For demo: just returns the uploaded file's public URL
-    file_url = f"/static/uploads/{file.filename}"
+    # Upload to Google Cloud Storage (3dshapesnap-uploads)
+    public_url = upload_file_to_gcs(file_data, filename)
 
     return {
-        "filename": file.filename,
-        "url": file_url,
-        "status": "received"
+        "filename": filename,
+        "url": public_url,
+        "status": "uploaded"
     }
 
 # Optional: serve prebuilt smart blocks library
@@ -77,3 +83,4 @@ async def viewer(request: Request, file: str):
         "request": request,
         "filename": file
     })
+
