@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import generate
-from gcs import upload_file_to_gcs  # <-- Google Cloud integration
+from app.utils.gcs import upload_file_to_gcs  # <-- Correct Google Cloud import!
 
 app = FastAPI(
     title="VectorForge",
@@ -35,7 +35,7 @@ def root():
 # Include image/CAD generation routes
 app.include_router(generate.router, prefix="/api")
 
-# DXF/STL Conversion File Upload Endpoint -- now uploads to Google Cloud Storage!
+# DXF/STL Conversion File Upload Endpoint -- uploads to Google Cloud Storage!
 @app.post("/convert")
 async def convert_file(file: UploadFile = File(...)):
     file_data = await file.read()
