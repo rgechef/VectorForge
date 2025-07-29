@@ -10,3 +10,4 @@ svgwrite
 cadquery
 google-cloud-storage
 gunicorn
+python-multipart
