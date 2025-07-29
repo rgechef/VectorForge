@@ -4,8 +4,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import generate
-from google.cloud import storage
-import os
+from gcs import upload_file_to_gcs  # <-- Google Cloud integration
 
 app = FastAPI(
     title="VectorForge",
@@ -13,32 +12,22 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# ---- CORS Middleware (allow all for now, restrict later!) ----
+# ---- CORS Middleware ----
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For production, restrict to your actual frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Mount static file directory (for any prebuilt smart blocks)
+# Static files (local, if you need them)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Serve templates for HTML rendering
+# HTML templates (if using)
 templates = Jinja2Templates(directory="templates")
 
-# Google Cloud Storage upload function
-def upload_file_to_gcs(file_data, filename, bucket_name="3dshapesnap-uploads"):
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(filename)
-    blob.upload_from_string(file_data)
-    # Make public (for direct download; comment this if you want private)
-    blob.make_public()
-    return blob.public_url
-
-# Root health check
+# Health check
 @app.get("/")
 def root():
     return {"status": "VectorForge is alive"}
@@ -46,16 +35,12 @@ def root():
 # Include image/CAD generation routes
 app.include_router(generate.router, prefix="/api")
 
-# --- DXF/STL Conversion File Upload Endpoint (POST /convert) ---
+# DXF/STL Conversion File Upload Endpoint -- now uploads to Google Cloud Storage!
 @app.post("/convert")
 async def convert_file(file: UploadFile = File(...)):
-    # Read uploaded file data
     file_data = await file.read()
     filename = file.filename
-
-    # Upload to Google Cloud Storage (3dshapesnap-uploads)
     public_url = upload_file_to_gcs(file_data, filename)
-
     return {
         "filename": filename,
         "url": public_url,
@@ -73,7 +58,7 @@ def get_block_library():
             "preview_image": "/static/preview/rect_base.png",
             "dxf_file": "/static/dxf/rect_base.dxf"
         },
-        # ... add other blocks as needed ...
+        # ... other blocks as needed ...
     ])
 
 # STL/OBJ 3D Model Viewer
@@ -83,4 +68,3 @@ async def viewer(request: Request, file: str):
         "request": request,
         "filename": file
     })
-
