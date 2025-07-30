@@ -1,70 +1,52 @@
-from fastapi import FastAPI, Request, File, UploadFile
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import generate
-from app.utils.gcs import upload_file_to_gcs  # <-- Correct Google Cloud import!
+import os
 
-app = FastAPI(
-    title="VectorForge",
-    description="Image to DXF/STL Converter with Smart CAD Blocks",
-    version="1.0.0"
-)
+# === GCS IMPORTS ===
+from google.cloud import storage
 
-# ---- CORS Middleware ----
+# === CONFIG ===
+BUCKET_NAME = "vectorforge-uploads"  # <--- YOUR BUCKET NAME
+
+app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Lock this down for production!
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Static files (local, if you need them)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# === UPLOAD ENDPOINT ===
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    if not (file.filename.endswith(".dxf") or file.filename.endswith(".stl")):
+        raise HTTPException(status_code=400, detail="Only DXF and STL files allowed.")
 
-# HTML templates (if using)
-templates = Jinja2Templates(directory="templates")
+    # Save to a temp file
+    temp_path = f"/tmp/{file.filename}"
+    with open(temp_path, "wb") as f:
+        f.write(await file.read())
 
-# Health check
-@app.get("/")
-def root():
-    return {"status": "VectorForge is alive"}
+    # Upload to GCS
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(file.filename)
+    blob.upload_from_filename(temp_path)
 
-# Include image/CAD generation routes
-app.include_router(generate.router, prefix="/api")
+    os.remove(temp_path)
+    return {"message": f"{file.filename} uploaded successfully."}
 
-# DXF/STL Conversion File Upload Endpoint -- uploads to Google Cloud Storage!
-@app.post("/convert")
-async def convert_file(file: UploadFile = File(...)):
-    file_data = await file.read()
-    filename = file.filename
-    public_url = upload_file_to_gcs(file_data, filename)
-    return {
-        "filename": filename,
-        "url": public_url,
-        "status": "uploaded"
-    }
-
-# Optional: serve prebuilt smart blocks library
-@app.get("/api/blocks")
-def get_block_library():
-    return JSONResponse(content=[
-        {
-            "id": "rect_base",
-            "name": "RectBase",
-            "description": "2D rectangle base with size params",
-            "preview_image": "/static/preview/rect_base.png",
-            "dxf_file": "/static/dxf/rect_base.dxf"
-        },
-        # ... other blocks as needed ...
-    ])
-
-# STL/OBJ 3D Model Viewer
-@app.get("/viewer", response_class=HTMLResponse)
-async def viewer(request: Request, file: str):
-    return templates.TemplateResponse("viewer.html", {
-        "request": request,
-        "filename": file
-    })
+# === DOWNLOAD ENDPOINT ===
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(filename)
+    temp_path = f"/tmp/{filename}"
+    blob.download_to_filename(temp_path)
+    if not os.path.exists(temp_path):
+        raise HTTPException(status_code=404, detail="File not found.")
+    return FileResponse(temp_path, filename=filename)
