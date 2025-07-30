@@ -1,20 +1,24 @@
-from fastapi import APIRouter, File, UploadFile, HTTPException
-from utils.gcs import upload_to_gcs
-import tempfile
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
+from app.utils.gcs import upload_to_gcs, download_from_gcs
 
 router = APIRouter()
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    # Save uploaded file to temp file
-    suffix = "." + file.filename.split(".")[-1]
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
+    try:
+        # Upload to GCS (store in 'outputs/' subfolder as per your screenshot)
+        blob_url = await upload_to_gcs(file, folder="outputs")
+        return {"file_url": blob_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # Here, convert file as needed (to DXF/STL)
-    # For now, just upload original
-    with open(tmp_path, "rb") as data:
-        url = upload_to_gcs(data, file.filename)
-    return {"download_url": url}
+@router.get("/download/{filename}")
+async def download_file(filename: str):
+    try:
+        # Downloads from GCS 'outputs/' folder
+        file_content = await download_from_gcs(filename, folder="outputs")
+        # You can stream file_content as a FileResponse if needed
+        return JSONResponse(content={"status": "success", "filename": filename})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
