@@ -1,14 +1,13 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, File, UploadFile, HTTPException
 from app.utils.gcs import upload_to_gcs
 
 router = APIRouter()
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """
-    Upload a file and store it in GCS. Returns the public URL.
-    """
     try:
+        print("Filename received:", file.filename)
+        print("Content type:", file.content_type)
         url = await upload_to_gcs(file)
         return {"url": url}
     except Exception as e:
