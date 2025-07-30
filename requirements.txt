@@ -1,13 +1,4 @@
 fastapi
-uvicorn
-jinja2
-opencv-python
-numpy
-Pillow
-ezdxf
-svgpathtools
-svgwrite
-cadquery
+uvicorn[standard]
 google-cloud-storage
-gunicorn
 python-multipart
