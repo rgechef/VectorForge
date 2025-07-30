@@ -1,23 +1,24 @@
-# app/utils/gcs.py
-import os
+#import os
 from google.cloud import storage
 
-GCS_BUCKET = os.getenv("GCS_BUCKET", "vectorforge-uploads")
-GCS_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/etc/secrets/gcp-key.json")
+# Load GCP credentials automatically from Render's secret mount
+GCP_CREDENTIALS_PATH = "/etc/secrets/gcp-key.json"
+BUCKET_NAME = "vectorforge-uploads"
 
 def get_gcs_client():
-    return storage.Client.from_service_account_json(GCS_CREDENTIALS)
+    return storage.Client.from_service_account_json(GCP_CREDENTIALS_PATH)
 
-def upload_to_gcs(file_obj, filename, folder="outputs"):
+async def upload_to_gcs(file, folder="outputs"):
     client = get_gcs_client()
-    bucket = client.bucket(GCS_BUCKET)
-    blob = bucket.blob(f"{folder}/{filename}")
-    blob.upload_from_file(file_obj)
-    blob.make_public()
-    return blob.public_url
+    bucket = client.bucket(BUCKET_NAME)
+    blob = bucket.blob(f"{folder}/{file.filename}")
+    blob.upload_from_file(file.file, content_type=file.content_type)
+    blob_url = f"https://storage.googleapis.com/{BUCKET_NAME}/{folder}/{file.filename}"
+    return blob_url
 
-def download_from_gcs(filename, folder="outputs"):
+async def download_from_gcs(filename, folder="outputs"):
     client = get_gcs_client()
-    bucket = client.bucket(GCS_BUCKET)
+    bucket = client.bucket(BUCKET_NAME)
     blob = bucket.blob(f"{folder}/{filename}")
     return blob.download_as_bytes()
+ app/utils/gcs.py
