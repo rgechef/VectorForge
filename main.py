@@ -1,11 +1,7 @@
-import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-# Import your API routes
 from app.routes import generate
 
-# === FastAPI app initialization ===
 app = FastAPI(
     title="VectorForge",
     description="API for DXF/STL generation and file upload/download",
@@ -29,11 +25,4 @@ app.include_router(generate.router)
 def read_root():
     return {"status": "VectorForge API running"}
 
-# === Optional: Add startup or shutdown events if you need them ===
-# @app.on_event("startup")
-# async def startup_event():
-#     pass
-
-# @app.on_event("shutdown")
-# async def shutdown_event():
-#     pass
+# Optional: Add startup/shutdown events below if needed
