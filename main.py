@@ -1,63 +1,39 @@
 import os
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import FileResponse, JSONResponse
-from google.cloud import storage
 
-# --------- CONFIG ---------
-GCP_BUCKET = "vectorforge-uploads"
-GCP_CREDENTIALS = "/etc/secrets/gcp-key.json"  # Don't change unless you use a different secret file path
-GCS_OUTPUTS_DIR = "outputs/"
+# Import your API routes
+from app.routes import generate
 
-# --------- APP & CORS ---------
-app = FastAPI()
+# === FastAPI app initialization ===
+app = FastAPI(
+    title="VectorForge",
+    description="API for DXF/STL generation and file upload/download",
+    version="1.0.0"
+)
 
+# === CORS configuration ===
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # PRODUCTION: replace with your Vercel domain for tighter security
+    allow_origins=["*"],  # Change to your frontend domain for production!
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-def get_gcs_client():
-    return storage.Client.from_service_account_json(GCP_CREDENTIALS)
+# === Include API routers ===
+app.include_router(generate.router)
 
-# --------- ROUTES ---------
-@app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith((".dxf", ".stl")):
-        raise HTTPException(status_code=400, detail="Only DXF/STL files allowed.")
-
-    client = get_gcs_client()
-    bucket = client.bucket(GCP_BUCKET)
-    blob = bucket.blob(f"{GCS_OUTPUTS_DIR}{file.filename}")
-
-    try:
-        contents = await file.read()
-        blob.upload_from_string(contents)
-        url = blob.public_url
-        return {"filename": file.filename, "url": url}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
-@app.get("/api/download/{filename}")
-def download_file(filename: str):
-    if not filename.lower().endswith((".dxf", ".stl")):
-        raise HTTPException(status_code=400, detail="Only DXF/STL files allowed.")
-
-    client = get_gcs_client()
-    bucket = client.bucket(GCP_BUCKET)
-    blob = bucket.blob(f"{GCS_OUTPUTS_DIR}{filename}")
-
-    if not blob.exists():
-        raise HTTPException(status_code=404, detail="File not found.")
-
-    # Download to a temp location in the container
-    local_path = f"/tmp/{filename}"
-    blob.download_to_filename(local_path)
-    return FileResponse(local_path, filename=filename, media_type="application/octet-stream")
-
+# === Root endpoint (health check) ===
 @app.get("/")
-def root():
-    return JSONResponse({"status": "VectorForge backend API running."})
+def read_root():
+    return {"status": "VectorForge API running"}
+
+# === Optional: Add startup or shutdown events if you need them ===
+# @app.on_event("startup")
+# async def startup_event():
+#     pass
+
+# @app.on_event("shutdown")
+# async def shutdown_event():
+#     pass
