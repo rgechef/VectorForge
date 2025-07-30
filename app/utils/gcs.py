@@ -1,4 +1,4 @@
-#import os
+import os
 from google.cloud import storage
 
 # Load GCP credentials automatically from Render's secret mount
@@ -21,4 +21,3 @@ async def download_from_gcs(filename, folder="outputs"):
     bucket = client.bucket(BUCKET_NAME)
     blob = bucket.blob(f"{folder}/{filename}")
     return blob.download_as_bytes()
- app/utils/gcs.py
