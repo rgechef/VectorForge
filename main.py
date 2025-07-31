@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import generate
+from routes_ping import router as ping_router
 
 app = FastAPI(
     title="VectorForge",
@@ -19,10 +20,9 @@ app.add_middleware(
 
 # === Include API routers ===
 app.include_router(generate.router)
+app.include_router(ping_router)
 
 # === Root endpoint (health check) ===
 @app.get("/")
 def read_root():
     return {"status": "VectorForge API running"}
-
-# Optional: Add startup/shutdown events below if needed
