@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import generate
-from routes_ping import router as ping_router
+from app.routes.generate import router as generate_router
+from app.routes.routes_ping import router as ping_router
 
 app = FastAPI(
     title="VectorForge",
@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 # === Include API routers ===
-app.include_router(generate.router)
+app.include_router(generate_router)
 app.include_router(ping_router)
 
 # === Root endpoint (health check) ===
